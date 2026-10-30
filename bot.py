@@ -126,10 +126,11 @@ async def send_digest(app, quiet_failure=False):
                 f"<b>{escape(job['title'])}</b>\n{escape(job['company'])} · {escape('; '.join(job['locations']))}\n"
                 f"{job['score']}/10 · {escape(job['why'])}\n<a href=\"{escape(job['url'])}\">Open posting</a> · {how}",
                 parse_mode="HTML", disable_web_page_preview=True,
-                reply_markup=None if job in auto else Keyboard([[
-                    Button("Apply", callback_data=f"apply:{job['id']}"),
-                    Button("Skip", callback_data=f"skip:{job['id']}"),
-                    Button("🚫 Company", callback_data=f"block:{job['id']}")]]))
+                reply_markup=None if job in auto else Keyboard([
+                    [Button("Apply", callback_data=f"apply:{job['id']}"),
+                     Button("Apply, tailored ✂️", callback_data=f"tailor:{job['id']}")],
+                    [Button("Skip", callback_data=f"skip:{job['id']}"),
+                     Button("🚫 Company", callback_data=f"block:{job['id']}")]]))
         except Exception:  # Telegram down: the job stays new, so the hourly retry offers it again
             log.exception("sending %s", job["url"])
             sent_all = False
@@ -310,6 +311,8 @@ async def _run_apply(job, bot):
         await bot.send_message(CHAT_ID, f"You already applied to {job['company']} on {row['date']}.")
         return
     set_status(job["id"], "applying")  # still this at startup = the bot stopped mid-application (resume_interrupted)
+    if job.get("tailor"):
+        await tailor(job, bot)
     await bot.send_message(CHAT_ID, f"Applying to {job['title']} @ {job['company']}…")
 
     async def ask(questions):
@@ -388,6 +391,31 @@ async def _run_apply(job, bot):
     # "handoff": stuck() already sent the screenshot and link.
 
 
+async def tailor(job, bot):
+    """Apply, tailored: Claude rewrites your resume for this posting and you choose it or your usual one. Anything
+    the second read couldn't find in your own resume is listed with it, so you know what to check."""
+    await bot.send_message(CHAT_ID, f"Tailoring your resume for {job['company']}…")
+    try:
+        path, changes, unsupported = await apply.tailored_resume(job)
+    except Exception as e:
+        log.exception("tailoring for %s", job["url"])
+        await bot.send_message(CHAT_ID, f"Couldn't tailor it ({str(e)[:200]}), so I'll use your usual resume.")
+        return
+    caption = (f"Tailored for {job['company']}: {changes}"
+               + ("\n\n⚠️ Not in your resume as written, check these:\n" + "\n".join(f"• {c}" for c in unsupported)
+                  if unsupported else ""))
+    try:
+        use = await _buttons(bot, "confirm", path.read_bytes(), path.name, caption, ("Use this", "Use my usual one"))
+    except asyncio.TimeoutError:
+        use = False
+    except Exception:  # Telegram wouldn't take the PDF: still apply, with the usual resume
+        log.exception("sending the tailored resume for %s", job["url"])
+        await bot.send_message(CHAT_ID, "Couldn't send you the tailored resume, so I'll use your usual one.")
+        return
+    if use:
+        job["resume"] = str(path)
+
+
 async def resume_interrupted(app):
     """At startup: applications the bot was queued for or in the middle of when it stopped (crash, restart, reboot)
     get a button again, since nothing else would bring them back. One stopped at or after Submit may have gone
@@ -415,7 +443,8 @@ async def resume_interrupted(app):
 
 COMMANDS = [  # shown in Telegram's / menu
     ("digest", "Search now"), ("status", "What I'm doing, settings, counts"),
-    ("apply", "Apply to a posting: /apply <link>"), ("auto", "Auto-apply to picks scoring N+: /auto 8, /auto off"),
+    ("apply", "Apply to a posting: /apply <link>"), ("tailor", "Apply with a resume tailored to it: /tailor <link>"),
+    ("auto", "Auto-apply to picks scoring N+: /auto 8, /auto off"),
     ("week", "This week's applications and unfinished ones"), ("applied", "Latest applications"),
     ("prep", "Answer the common form questions up front"),
     ("answers", "Saved form answers: /answers 3 <new text> to change"), ("forget", "Delete a saved answer: /forget 3"),
@@ -731,8 +760,19 @@ async def cmd_apply(update, ctx):
         ctx.application.create_task(apply_link(url, ctx.bot))
 
 
-async def apply_link(url, bot):
-    await run_apply(await asyncio.to_thread(job_from_url, url), bot)
+async def cmd_tailor(update, ctx):
+    """/tailor <link>: like /apply, with a resume tailored to the posting first (you choose it or your usual one)."""
+    urls = [arg for arg in ctx.args or [] if arg.startswith("http")]
+    if not urls:
+        await update.message.reply_text("Send /tailor <link to the posting>")
+        return
+    for url in dict.fromkeys(urls):
+        ctx.application.create_task(apply_link(url, ctx.bot, tailored=True))
+
+
+async def apply_link(url, bot, tailored=False):
+    job = await asyncio.to_thread(job_from_url, url)
+    await run_apply({**job, "tailor": True} if tailored else job, bot)
 
 
 async def on_button(update, ctx):
@@ -770,7 +810,7 @@ async def on_button(update, ctx):
     elif row := already_applied(job):
         await q.message.reply_text(f"You already applied to this on {row['date']}.")
     else:
-        ctx.application.create_task(run_apply(job, ctx.bot))
+        ctx.application.create_task(run_apply({**job, "tailor": True} if action == "tailor" else job, ctx.bot))
 
 
 async def on_text(update, ctx):
@@ -855,7 +895,8 @@ def main():
     app.add_handler(CommandHandler("digest", cmd_digest, me))
     for name, fn in [("country", cmd_country), ("count", cmd_count), ("pause", cmd_pause),
                      ("resume", cmd_resume), ("applied", cmd_applied), ("cost", cmd_cost), ("library", cmd_library),
-                     ("apply", cmd_apply), ("auto", cmd_auto), ("status", cmd_status), ("answers", cmd_answers),
+                     ("apply", cmd_apply), ("tailor", cmd_tailor), ("auto", cmd_auto), ("status", cmd_status),
+                     ("answers", cmd_answers),
                      ("forget", cmd_forget), ("block", cmd_block), ("unblock", cmd_unblock),
                      ("week", cmd_week), ("prep", cmd_prep)]:
         app.add_handler(CommandHandler(name, fn, me))

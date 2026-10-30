@@ -83,6 +83,7 @@ def usage_summary(path=USAGE_CSV):
     lines = [f"Last 30 days: ${sum(float(r['cost']) for r in rows if r['time'] >= month_ago):.2f}  "
              f"(all time ${sum(float(r['cost']) for r in rows):.2f}, {len(rows)} calls)"]
     for kind, name in [("rank", "Daily digest"), ("map_fields", "Per form page"), ("cover_letter", "Cover letter"),
+                       ("tailor", "Tailored resume"), ("claim_check", "Tailored resume check"),
                        ("library", "Library card"),
                        ("extract", "Quercus scan")]:
         costs = [float(r["cost"]) for r in rows if r["kind"] == kind]
@@ -220,3 +221,65 @@ def cover_letter(job, posting, answers):
           "answers; no invented skills, no flattery, no clichés like 'I am writing to express my interest'. "
           "No greeting, no sign-off, no placeholders.",
         CoverLetter, cached=_applicant(answers)).paragraphs
+
+
+class ResumeEntry(BaseModel):
+    heading: str  # "Backend Intern, Shopify" or a project name
+    detail: str  # dates, location, stack: whatever the original puts beside it
+    bullets: list[str]
+
+
+class ResumeSection(BaseModel):
+    title: str
+    entries: list[ResumeEntry]
+
+
+class TailoredResume(BaseModel):
+    sections: list[ResumeSection]
+    changes: str  # one sentence: what was moved, cut or reworded for this job
+
+
+TAILOR_RULES = (
+    "You tailor this applicant's resume to one job at a time.\n\n"
+    "Applicant's resume (the only source of facts):\n{resume}\n\n"
+    "Rules:\n"
+    "- Every fact comes from this resume. Keep employers, titles, dates, schools, numbers and tool names exactly as "
+    "they are. Never add a skill, tool, project, result or number it doesn't have.\n"
+    "- You may reorder sections, entries and bullets, cut what doesn't help for this job, merge or reword bullets "
+    "to lead with what the posting asks for, and use the posting's words where the resume supports them.\n"
+    "- One page: about 450-600 words. Strong verbs, results first, no first person, no summary paragraph unless the "
+    "original has one.\n"
+    "- Leave out the name and contact line: the page adds them.\n"
+)
+
+
+def tailor_resume(job, posting):
+    """The applicant's resume rewritten for this job (same facts, chosen and ordered for it)."""
+    return _ask(
+        "tailor",
+        f"Tailor the resume for {job['title']} at {job['company']}.\n\n"
+        + (f"Job posting:\n{posting[:6000]}\n\n" if posting else "")
+        + _examples("resume", job, posting),
+        TailoredResume, cached=TAILOR_RULES.format(resume=PROFILE.get("resume_text", "")))
+
+
+def resume_as_text(resume):
+    return "\n\n".join(f"{s.title}\n" + "\n".join(
+        f"{e.heading} | {e.detail}\n" + "\n".join(f"- {b}" for b in e.bullets) for e in s.entries)
+        for s in resume.sections)
+
+
+class Claims(BaseModel):
+    unsupported: list[str]
+
+
+def check_claims(resume):
+    """Statements in a tailored resume that the original doesn't back up (a second read, so you see what to check)."""
+    return _ask(
+        "claim_check",
+        f"Original resume:\n{PROFILE.get('resume_text', '')}\n\nRewritten resume:\n{resume_as_text(resume)}\n\n"
+        "List each statement in the rewritten resume that the original doesn't support: an employer, title, date, "
+        "number, skill, tool, project or result that isn't there, or a claim made stronger than the original's. "
+        "Rewording, reordering and leaving things out are fine. Quote the rewritten text briefly. Empty if all of it "
+        "is supported.",
+        Claims, model=FAST_MODEL).unsupported

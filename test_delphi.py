@@ -520,6 +520,105 @@ def test_cover_letter_examples_are_framed():
         llm._ask, library.examples = real_ask, real_examples
 
 
+def tailored(bullets=("Cut p99 latency 40%",)):
+    return llm.TailoredResume(changes="Led with backend work.", sections=[llm.ResumeSection(
+        title="Experience", entries=[llm.ResumeEntry(heading="Intern, Acme", detail="2024", bullets=list(bullets))])])
+
+
+def test_tailor_resume_prompt():
+    import library
+
+    calls = []
+    real_ask, real_examples, saved = llm._ask, library.examples, dict(llm.PROFILE)
+    llm._ask = lambda kind, prompt, schema, **kw: calls.append((kind, prompt, kw)) or tailored()
+    llm.PROFILE["resume_text"] = "Ada Lovelace. Intern at Acme: cut p99 latency 40%."
+    try:
+        library.examples = lambda kind, job, posting: calls.append(("examples", kind)) or [
+            ({"tier": 4}, "Built a compiler at Initech.")]
+        out = llm.tailor_resume(job(title="Backend Intern"), "We need Go and Kafka.")
+        assert out.changes == "Led with backend work."
+        assert ("examples", "resume") in calls
+        kind, prompt, kw = calls[-1]
+        assert kind == "tailor" and "Backend Intern at Acme" in prompt and "We need Go and Kafka." in prompt
+        assert "Example resumes by OTHER people" in prompt and "NOT about the applicant" in prompt
+        assert "<example tier=4>\nBuilt a compiler at Initech.\n</example>" in prompt
+        # The resume and the rules are the cached prefix; the job-specific part isn't in it.
+        assert "cut p99 latency 40%" in kw["cached"] and "the only source of facts" in kw["cached"]
+        assert "Kafka" not in kw["cached"] and "Initech" not in kw["cached"]
+        library.examples = lambda kind, job, posting: []
+        llm.tailor_resume(job(), "")
+        assert "Example" not in calls[-1][1] and "Job posting" not in calls[-1][1]
+    finally:
+        llm._ask, library.examples = real_ask, real_examples
+        llm.PROFILE.clear()
+        llm.PROFILE.update(saved)
+
+
+def test_check_claims_prompt():
+    calls = []
+    real_ask, saved = llm._ask, dict(llm.PROFILE)
+    llm._ask = lambda kind, prompt, schema, **kw: calls.append((kind, prompt, kw)) or llm.Claims(
+        unsupported=["Led a team of 5"])
+    llm.PROFILE["resume_text"] = "ORIGINAL TEXT"
+    try:
+        assert llm.check_claims(tailored(["Led a team of 5"])) == ["Led a team of 5"]
+        kind, prompt, kw = calls[0]
+        assert kind == "claim_check" and kw["model"] == llm.FAST_MODEL
+        assert "ORIGINAL TEXT" in prompt and "Experience\nIntern, Acme | 2024\n- Led a team of 5" in prompt
+    finally:
+        llm._ask = real_ask
+        llm.PROFILE.clear()
+        llm.PROFILE.update(saved)
+
+
+def test_resume_path_prefers_tailored():
+    import apply
+    tmp = Path(tempfile.mkdtemp())
+    for name in ("main", "ml", "Ada_Resume"):
+        (tmp / f"{name}.pdf").write_bytes(b"%PDF")
+    saved = dict(apply.PROFILE)
+    apply.PROFILE.update(resume_pdf=str(tmp / "main.pdf"), resumes=[{"pdf": str(tmp / "ml.pdf"), "keywords": ["ML"]}])
+    try:
+        tailored = str(tmp / "Ada_Resume.pdf")
+        assert apply.resume_path({"title": "ML Intern", "resume": tailored}) == Path(tailored)
+        try:  # a tailored one that's gone says so instead of failing inside the upload
+            apply.resume_path({"title": "ML Intern", "resume": str(tmp / "gone.pdf")})
+            raise AssertionError("no error")
+        except RuntimeError as e:
+            assert "tailored resume" in str(e)
+        assert apply.resume_path({"title": "ML Intern", "resume": None}).stem == "ml"
+        assert apply.resume_path({"title": "ML Intern"}).stem == "ml"
+    finally:
+        apply.PROFILE.clear()
+        apply.PROFILE.update(saved)
+
+
+def test_resume_html():
+    import apply
+    saved = dict(apply.PROFILE)
+    apply.PROFILE.clear()
+    apply.PROFILE.update(first_name="Ada", last_name="Lovelace", email="ada@x.com", phone="416-555-0199",
+                         city="Toronto", github="github.com/ada")
+    try:
+        resume = llm.TailoredResume(changes="", sections=[
+            llm.ResumeSection(title="Experience", entries=[
+                llm.ResumeEntry(heading="Intern, AT&T <Labs>", detail="2024", bullets=["Wrote <script>x</script>",
+                                                                                         "Cut latency 40%"]),
+                llm.ResumeEntry(heading="TA", detail="", bullets=[])]),
+            llm.ResumeSection(title="Skills & Tools", entries=[
+                llm.ResumeEntry(heading="Languages", detail="Python, Go", bullets=["Rust"])])])
+        html = apply.resume_html(resume)
+        assert "<h1>Ada Lovelace</h1>" in html
+        assert "ada@x.com · 416-555-0199 · Toronto · github.com/ada" in html
+        assert "AT&amp;T &lt;Labs&gt;" in html and "Skills &amp; Tools" in html
+        assert "<script>" not in html and "&lt;script&gt;x&lt;/script&gt;" in html
+        assert html.count("<li>") == 3 and "<li>Cut latency 40%</li>" in html and "<li>Rust</li>" in html
+        assert html.count("<ul>") == 2  # an entry without bullets gets no empty list
+    finally:
+        apply.PROFILE.clear()
+        apply.PROFILE.update(saved)
+
+
 def test_library_add_and_remove():
     """add pushes the redacted text and its card to the group's repo; another clone sees it after sync."""
     import os

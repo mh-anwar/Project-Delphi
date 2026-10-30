@@ -75,6 +75,7 @@ only share a server with people who trust its owner, or give each person their o
 | `/count 5-10` | jobs per digest |
 | `/pause`, `/resume` | stop / restart the scheduled digests |
 | `/apply <link> [<link> …]` | apply to any postings, e.g. ones you found yourself or want to redo (in turn) |
+| `/tailor <link> [<link> …]` | like `/apply`, with your resume tailored to each posting first (see below) |
 | `/auto 8`, `/auto off` | apply to digest picks scoring 8/10+ without a tap (sites the bot can fill only) |
 | `/status` | what it's doing now, queue, settings, counts |
 | `/prep` | answer the common form questions (start date, relocation, pay, …) once, up front |
@@ -124,6 +125,17 @@ answers, and the profile + resume part of that prompt is cached.
 
 Have an ML resume and a general one? List the extra versions under `resumes:` in `profile.yaml`, each with
 keywords. A job whose title contains one of those words gets that version; everything else gets `resume_pdf`.
+
+## Tailored resumes
+
+Every digest job has an **Apply, tailored ✂️** button next to **Apply** (or send `/tailor <link>`). The bot reads
+the posting, and Claude rewrites your `resume_text` for it, laid out on one page with your name and contact line
+from `profile.yaml`. It may reorder, cut and reword, but never add anything your resume doesn't have, and it
+follows the structure of the shared library's best matching resumes (tier 2+), never their content. A second, cheap
+read lists any statement it couldn't find in your own resume. You get the PDF with that list and pick **Use this**
+or **Use my usual one** before the form is filled. Each one is kept in `tailored/<company>-<title>/`. It's never
+done unless you ask: plain **Apply** and `/auto` use your usual resume. Cost: one Opus call plus one Haiku call per
+tailored resume (`/cost` shows them).
 
 ## Shared library
 
