@@ -6,7 +6,7 @@ import sqlite3
 import threading
 from datetime import date
 
-from config import ROOT
+from config import DATA
 
 def open_db(path):
     db = sqlite3.connect(path, check_same_thread=False)
@@ -21,7 +21,7 @@ def open_db(path):
     return db
 
 
-DB = open_db(ROOT / "delphi.db")
+DB = open_db(DATA / "delphi.db")
 LOCK = threading.RLock()  # the digest runs in a worker thread while Telegram handlers use the same connection
 # auto_min: digest picks scoring at least this get applied to without a tap (None = off).
 DEFAULTS = {"countries": ["canada", "usa"], "count": 8, "paused": False, "last_digest": "", "workday_accounts": [],
@@ -89,7 +89,7 @@ def status_counts():
 
 # applied.csv is the source of truth for "did I already apply?". Add rows by hand for
 # applications you sent outside the bot and those jobs get skipped too.
-APPLIED_CSV = ROOT / "applied.csv"
+APPLIED_CSV = DATA / "applied.csv"
 CSV_FIELDS = ["date", "company", "title", "location", "url", "source", "status"]
 DONE = {"submitted", "manual"}
 

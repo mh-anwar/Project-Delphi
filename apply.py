@@ -18,12 +18,16 @@ from pathlib import Path
 from playwright.async_api import async_playwright
 
 import llm
-from config import PROFILE, ROOT, env
+from config import DATA, PROFILE, env
 from store import canonical, set_status
 
 log = logging.getLogger(__name__)
-ANSWERS = ROOT / "answers.json"  # label -> your answer, reused on every later form
-DISPLAY = ":99"  # virtual screen for the phone view (see bot.start_phone_view)
+ANSWERS = DATA / "answers.json"  # label -> your answer, reused on every later form
+# The phone view's web port. Each person on a shared server gets their own (deploy.sh <name> picks one), and with
+# it their own virtual screen and VNC port: 6080 -> :99 and 5999, 6081 -> :100 and 5998, ...
+PHONE_VIEW_PORT = int(env("PHONE_VIEW_PORT", "6080"))
+DISPLAY = f":{99 + PHONE_VIEW_PORT - 6080}"  # virtual screen for the phone view (see bot.start_phone_view)
+VNC_PORT = 5999 - (PHONE_VIEW_PORT - 6080)
 SUPPORTED = re.compile(r"greenhouse\.io|lever\.co|ashbyhq\.com|apply\.workable\.com")
 # Single tick boxes: agreements get ticked, promotions stay off, the site's own on/off settings are left alone.
 CONSENT = re.compile(r"understand|agree|acknowledge|consent|accept|certify|confirm|attest|terms|privacy|allow|"
@@ -592,7 +596,7 @@ async def cover_letter_pdf(page, job, answers):
                              today=date.today().strftime("%B %-d, %Y"),
                              body="".join(f"<p>{escape(par)}</p>" for par in paragraphs))
     slug = re.sub(r"[^a-z0-9]+", "-", f"{job['company']} {job['title']}".lower()).strip("-")[:80] or "cover-letter"
-    path = ROOT / "cover_letters" / f"{slug}.pdf"
+    path = DATA / "cover_letters" / f"{slug}.pdf"
     path.parent.mkdir(exist_ok=True)
     # A separate headless browser: printing to PDF doesn't work in the visible one the phone view uses.
     printer = await page.context.browser.browser_type.launch()

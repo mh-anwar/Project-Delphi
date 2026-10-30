@@ -47,6 +47,25 @@ It starts on boot, restarts within a minute if it crashes, and keeps running aft
 Nothing needs to stay open, but the machine has to be on. `DIGEST_HOUR=8,17` sends two a day. If it was asleep
 at a digest hour, that digest goes out within an hour of waking up.
 
+## Several people on one server
+
+Each person runs their own copy of the bot from the same checkout, with their own files in `people/<name>/`:
+their `.env` (Anthropic key, so Claude bills them; Telegram bot; Workday password), `profile.yaml`, resumes,
+`delphi.db`, `applied.csv`, answers and screenshots. Nothing is shared between them, and one person's stuck
+application never holds up another's.
+
+```
+./deploy.sh krish                 # first time: makes people/krish/ with a .env and profile.yaml to fill in
+DELPHI_HOME=people/krish .venv/bin/python bot.py   # send /start to Krish's bot for the chat id, then Ctrl-C
+./deploy.sh krish                 # checks Krish's setup, then installs and starts delphi@krish
+journalctl --user -u delphi@krish -f
+```
+
+Each person gets their own phone view port (`PHONE_VIEW_PORT` in their `.env`, from 6081 up). `git pull` then
+`./deploy.sh <name>` for each person updates them. Whoever has the server's login can read everyone's `.env`, so
+only share a server with people who trust its owner, or give each person their own Linux account and checkout
+(plain `./deploy.sh` there).
+
 ## Commands
 
 | | |

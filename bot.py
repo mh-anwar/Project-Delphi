@@ -23,7 +23,7 @@ import apply
 import llm
 import sources
 import workday
-from config import PROFILE, ROOT, env
+from config import DATA, PROFILE, env
 from filters import DEGREES, block_term, blocked, degree_kind, keep, relevance, words
 from store import (_key, already_applied, applied_rows, canonical, get_job, get_setting, is_new, job_status,
                    jobs_with_status,
@@ -262,9 +262,9 @@ def keep_copy(job, png):
     you said on it when they call."""
     slug = re.sub(r"[^a-z0-9]+", "-", f"{job['company']} {job['title']}".lower()).strip("-")[:80]
     with contextlib.suppress(OSError):  # a copy for you; never worth failing the application over
-        (ROOT / "applications").mkdir(exist_ok=True)
+        (DATA / "applications").mkdir(exist_ok=True)
         # The id keeps two same-titled postings (one per city) from overwriting each other.
-        (ROOT / "applications" / f"{datetime.now(TZ).date().isoformat()}-{slug}-{job['id'][:6]}.png").write_bytes(png)
+        (DATA / "applications" / f"{datetime.now(TZ).date().isoformat()}-{slug}-{job['id'][:6]}.png").write_bytes(png)
 
 
 async def find_form(url):
@@ -429,17 +429,17 @@ async def on_start(app):
 
 def start_phone_view():
     """With VNC_PASSWORD set, the bot's browser draws on a virtual screen that your phone can open in Safari:
-    Xvfb is the screen, x11vnc shares it, noVNC (websockify) serves it as a web page on port 6080."""
+    Xvfb is the screen, x11vnc shares it, noVNC (websockify) serves it as a web page on PHONE_VIEW_PORT (6080)."""
     if not all(map(shutil.which, ("Xvfb", "x11vnc", "websockify"))):
         raise SystemExit("VNC_PASSWORD is set, so the phone view needs: sudo apt install xvfb x11vnc novnc")
-    secret = ROOT / ".vncpass"
+    secret = DATA / ".vncpass"
     secret.write_text(env("VNC_PASSWORD"))
     secret.chmod(0o600)
     procs = []
     for cmd in (["Xvfb", apply.DISPLAY, "-screen", "0", "1280x900x24"],
-                ["x11vnc", "-display", apply.DISPLAY, "-rfbport", "5999", "-localhost", "-forever", "-shared",
+                ["x11vnc", "-display", apply.DISPLAY, "-rfbport", str(apply.VNC_PORT), "-localhost", "-forever", "-shared",
                  "-passwdfile", str(secret), "-quiet"],
-                ["websockify", "--web", "/usr/share/novnc", "6080", "localhost:5999"]):
+                ["websockify", "--web", "/usr/share/novnc", str(apply.PHONE_VIEW_PORT), f"localhost:{apply.VNC_PORT}"]):
         procs.append(subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
         time.sleep(1)  # each needs the one before it up
     atexit.register(lambda: [proc.terminate() for proc in procs])
@@ -452,7 +452,7 @@ def phone_link():
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             s.connect(("8.8.8.8", 80))  # no packet is sent; this just picks the outgoing interface
             host = s.getsockname()[0]
-    return f"http://{host}:6080/vnc.html?autoconnect=1&resize=scale"
+    return f"http://{host}:{apply.PHONE_VIEW_PORT}/vnc.html?autoconnect=1&resize=scale"
 
 
 def watch_hint():
@@ -780,7 +780,7 @@ def check():
             problems.append(problem)
         return ok
 
-    need((ROOT / ".env").exists(), "no .env: cp .env.example .env and fill it in")
+    need((DATA / ".env").exists(), f"no .env in {DATA}: cp .env.example there and fill it in")
     if need(env("TELEGRAM_BOT_TOKEN"), "TELEGRAM_BOT_TOKEN is empty in .env (make a bot with @BotFather)"):
         try:
             with urllib.request.urlopen(f"https://api.telegram.org/bot{env('TELEGRAM_BOT_TOKEN')}/getMe", timeout=20) as r:
@@ -793,7 +793,7 @@ def check():
             llm._client().models.retrieve(llm.MODEL)
         except Exception as e:
             problems.append(f"Anthropic API rejected the key or model {llm.MODEL}: {e}")
-    if need((ROOT / "profile.yaml").exists(), "no profile.yaml: cp profile.example.yaml profile.yaml and fill it in"):
+    if need((DATA / "profile.yaml").exists(), f"no profile.yaml in {DATA}: cp profile.example.yaml there and fill it in"):
         for key in ("first_name", "last_name", "email", "phone", "resume_text", "work_auth"):
             need(PROFILE.get(key), f"profile.yaml: {key} is empty")
         if (level := PROFILE.get("degree_level")) and degree_kind(level) not in {k for k, _ in DEGREES}:

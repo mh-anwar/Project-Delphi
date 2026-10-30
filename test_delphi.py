@@ -454,6 +454,23 @@ def test_describe():
         ("Soti", "Software Developer Intern")
 
 
+def test_one_person_per_folder():
+    """DELPHI_HOME moves every per-person file there, and a phone view port moves the screen and VNC port with it."""
+    import os
+    import subprocess
+    import sys
+
+    home = Path(tempfile.mkdtemp())
+    (home / ".env").write_text("PHONE_VIEW_PORT=6082\n")
+    (home / "profile.yaml").write_text("first_name: Ada\n")
+    out = subprocess.run([sys.executable, "-c", "import apply, llm, store, config; print(config.PROFILE['first_name'], "
+                          "store.APPLIED_CSV.parent, apply.ANSWERS.parent, llm.USAGE_CSV.parent, apply.DISPLAY, "
+                          "apply.VNC_PORT)"], env={**os.environ, "DELPHI_HOME": str(home)}, cwd=Path(__file__).parent,
+                         capture_output=True, text=True, check=True).stdout.split()
+    assert out == ["Ada", str(home), str(home), str(home), ":101", "5997"], out
+    assert (home / "delphi.db").exists()
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
