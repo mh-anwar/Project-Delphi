@@ -471,6 +471,99 @@ def test_one_person_per_folder():
     assert (home / "delphi.db").exists()
 
 
+RESUME = """Ada Lovelace
+ada.l@gmail.com | (416) 555-0199 | linkedin.com/in/adal | github.com/adal | ada.dev
+12 King Street West, Toronto
+Software Engineering Intern, Acme  May 2024 - Aug 2024
+Cut p99 latency 40% on a Python service; 2023-2024 TA. Call +1 416 555 0199. Ada led the team."""
+
+
+def test_library_redact():
+    from library import redact
+
+    out = redact(RESUME, ["Ada Lovelace"])
+    for gone in ("Ada", "Lovelace", "gmail", "555", "linkedin", "github", "ada.dev", "King Street"):
+        assert gone not in out, (gone, out)
+    for kept in ("May 2024 - Aug 2024", "2023-2024", "40%", "Python", "Acme"):
+        assert kept in out, (kept, out)
+    assert out.splitlines()[0] == "[name]"
+    # Two lines of dates don't add up to a phone number.
+    assert "2023" in redact("Jan 2021 - 2023\n2024 - 2025 (4)", kind="cover_letter")
+
+
+def test_library_examples():
+    from library import examples
+
+    docs = [({"tier": 4, "roles": ["hardware"], "summary": "FPGA and PCB design intern"}, "Verilog boards"),
+            ({"tier": 2, "roles": ["ml"], "summary": "machine learning intern"}, "PyTorch models"),
+            ({"tier": 4, "roles": ["ml"], "summary": "machine learning research"}, "PyTorch transformers"),
+            ({"tier": 1, "roles": ["ml"], "summary": "machine learning"}, "PyTorch PyTorch")]
+    found = examples("resume", job(title="Machine Learning Intern"), "PyTorch transformers", docs=docs)
+    assert [e["tier"] for e, _ in found] == [4, 2], found  # best tier first among matches, no tier 1, no hardware
+    assert examples("resume", job(title="Marketing Intern"), docs=docs) == []
+
+
+def test_cover_letter_examples_are_framed():
+    import library
+
+    prompts = []
+    real_ask, real_examples = llm._ask, library.examples
+    llm._ask = lambda kind, prompt, schema, **kw: prompts.append(prompt) or llm.CoverLetter(paragraphs=["x"])
+    try:
+        library.examples = lambda kind, job, posting: [({"tier": 4}, "Built a compiler at Initech.")]
+        llm.cover_letter(job(), "posting", {})
+        assert "NOT about the applicant" in prompts[0] and "Initech" in prompts[0]
+        library.examples = lambda kind, job, posting: []
+        llm.cover_letter(job(), "posting", {})
+        assert "Example" not in prompts[1]
+    finally:
+        llm._ask, library.examples = real_ask, real_examples
+
+
+def test_library_add_and_remove():
+    """add pushes the redacted text and its card to the group's repo; another clone sees it after sync."""
+    import os
+    import subprocess
+
+    import library
+
+    tmp = Path(tempfile.mkdtemp())
+    git = lambda *a, cwd=tmp: subprocess.run(["git", *a], cwd=cwd, check=True, capture_output=True)  # noqa: E731
+    git("init", "-q", "--bare", "-b", "main", "shared.git")
+    for clone in ("mine", "theirs"):
+        git("clone", "-q", "shared.git", clone)
+        for k, v in (("user.email", "t@x"), ("user.name", "t")):
+            git("config", k, v, cwd=tmp / clone)
+    (tmp / "mine" / "library.yaml").write_text("[]\n")
+    git("add", "-A", cwd=tmp / "mine")
+    git("commit", "-qm", "start", cwd=tmp / "mine")
+    git("push", "-q", "-u", "origin", "main", cwd=tmp / "mine")
+    git("pull", "-q", "origin", "main", cwd=tmp / "theirs")
+
+    real = library.pdf_text, library.describe
+    library.pdf_text = lambda pdf: RESUME * 3
+    library.describe = lambda text, kind: library.Card(summary="SWE intern, backend", roles=["software", "nope"])
+    try:
+        os.environ["LIBRARY_DIR"] = str(tmp / "mine")
+        library.add("x.pdf", "resume", 4, "Ada L", "Google interview", ["Ada Lovelace"], yes=True)
+        entry = library.entries()[0]
+        assert entry["file"] == f"resumes/ada-l-{__import__('datetime').date.today()}.txt", entry
+        assert entry["tier"] == 4 and entry["roles"] == ["software"] and "Lovelace" not in (
+            tmp / "mine" / entry["file"]).read_text()
+        os.environ["LIBRARY_DIR"] = str(tmp / "theirs")
+        library.sync()
+        assert [e["file"] for e in library.entries()] == [entry["file"]]
+        assert "tier 4: 1" in library.summary()
+        os.environ["LIBRARY_DIR"] = str(tmp / "mine")
+        library.remove(entry["file"])
+        os.environ["LIBRARY_DIR"] = str(tmp / "theirs")
+        library.sync()
+        assert library.entries() == [] and not (tmp / "theirs" / entry["file"]).exists()
+    finally:
+        library.pdf_text, library.describe = real
+        os.environ.pop("LIBRARY_DIR")
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
