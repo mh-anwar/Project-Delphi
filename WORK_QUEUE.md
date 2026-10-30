@@ -37,6 +37,12 @@ Status keys: `[ ]` todo · `[~]` in progress · `[x]` done · `[!]` blocked (say
       slug). Slug guessing missed 6/6 in a spot check, so it needs a smarter lookup.
 - [ ] Outcome tracking: `/outcome <company> interview|rejected|offer` in a separate column of `applied.csv`.
 - [ ] Strip cookie-banner text from `posting_text` before it goes to Claude (cosmetic, a few tokens).
+- [ ] Switch from Telegram to Discord (eventually). Only `bot.py` imports Telegram (buttons, command handlers,
+      replies, photo/file sends); `apply.py` and `workday.py` talk through the `ask` callback. Put a small
+      messenger layer between `bot.py` and Telegram first (send text/buttons/files, wait for a tap or reply), then
+      add discord.py behind it: slash commands for the menu, button views for Apply/Submit, and keep the
+      per-request tags so a stale tap still can't approve a different application. Run both side by side until
+      Discord has done a full apply → "Submit this?" cycle.
 - [ ] SmartRecruiters: **won't do**. It blocks headless browsers; getting past that would mean evading bot detection.
 
 ## Done (branch `improvements`, PR #1, 2026-10-29)
@@ -68,8 +74,17 @@ Bot and unattended running
 Reviews: three independent review passes over the branch; every finding fixed ("Review fixes", "Second review
 fixes", "Third review fixes" commits).
 
+## Done (branch `instances`, stacked on `improvements`)
+
+- [x] Several people on one server: `DELPHI_HOME` holds one person's files (code stays shared), `./deploy.sh <name>`
+      makes `people/<name>/` and installs `delphi@<name>`, each with their own phone view port, screen and VNC port.
+      Tested: two people created, ports 6081/6082, `--check` reads the right folder; the unit file passes
+      `systemd-analyze verify`. Not run as a real service yet (no secrets here).
+
 ## Log
 
 - 2026-10-29: 30 commits on `improvements`, PR #1 opened from the fork. Live verification scripts lived in
   `/tmp/delphi-verify` (gone after reboot): `fill_live.py` fills a posting with stubbed answers and screenshots it;
   `e2e.py` runs digest → /auto → apply with a fake Telegram that taps Cancel. Nothing deployed: no secrets on the server.
+- 2026-10-29: chose one server with a copy per person over a multi-user app (keys, passwords and bills stay
+  per person; nearly no code change). Shared resume library and opt-in tailoring follow as stacked PRs.

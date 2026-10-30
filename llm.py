@@ -11,7 +11,7 @@ from functools import cache
 import anthropic
 from pydantic import BaseModel
 
-from config import PROFILE, ROOT, env
+from config import DATA, PROFILE, env
 
 MODEL = env("DELPHI_MODEL", "claude-opus-5-5")
 FAST_MODEL = env("DELPHI_FAST_MODEL", "claude-haiku-5-5")
@@ -21,7 +21,7 @@ PRICES = {
     "claude-sonnet-5-5": (2.00, 10.00, 0.20),
     "claude-haiku-5-5": (0.10, 0.50, 0.01),
 }
-USAGE_CSV = ROOT / "usage.csv"
+USAGE_CSV = DATA / "usage.csv"
 USAGE_FIELDS = ["time", "kind", "model", "input", "cache_write", "cache_read", "output", "cost"]
 
 

@@ -82,7 +82,7 @@ def test_fill_and_submit():
     llm.map_fields = fake_map
     llm.cover_letter = lambda job, posting, answers: seen.setdefault("letter_posting", posting) and [
         "I build things that go fast.", "Second paragraph."]
-    apply.ROOT = tmp
+    apply.DATA = tmp
     asked, filled = [], {}
 
     async def ask(questions):
@@ -136,7 +136,7 @@ def test_bot_flow():
 
     tmp = Path(tempfile.mkdtemp())
     store.APPLIED_CSV = tmp / "applied.csv"
-    bot.ROOT = tmp
+    bot.DATA = tmp
     PROFILE.update(first_name="Ada", email="ada@x.com", city="Toronto", resume_pdf=str(tmp / "resume.pdf"))
     (tmp / "resume.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
     apply.ANSWERS = tmp / "answers.json"
