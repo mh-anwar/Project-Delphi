@@ -11,6 +11,7 @@ from functools import cache
 import anthropic
 from pydantic import BaseModel
 
+import library
 from config import DATA, PROFILE, env
 
 MODEL = env("DELPHI_MODEL", "claude-opus-5-5")
@@ -82,6 +83,7 @@ def usage_summary(path=USAGE_CSV):
     lines = [f"Last 30 days: ${sum(float(r['cost']) for r in rows if r['time'] >= month_ago):.2f}  "
              f"(all time ${sum(float(r['cost']) for r in rows):.2f}, {len(rows)} calls)"]
     for kind, name in [("rank", "Daily digest"), ("map_fields", "Per form page"), ("cover_letter", "Cover letter"),
+                       ("library", "Library card"),
                        ("extract", "Quercus scan")]:
         costs = [float(r["cost"]) for r in rows if r["kind"] == kind]
         if costs:
@@ -192,12 +194,26 @@ class CoverLetter(BaseModel):
     paragraphs: list[str]
 
 
+def _examples(kind, job, posting):
+    """The library's best matching examples for this job, framed so none of their facts end up in yours."""
+    found = library.examples(kind, job, posting)
+    if not found:
+        return ""
+    label = kind.replace("_", " ")
+    return (f"Example {label}s by OTHER people, from a shared library, that got them interviews. Use them only for "
+            f"structure, tone, length and how specific to be. They are NOT about the applicant: never take a fact, "
+            f"project, employer, skill, number or sentence from them.\n\n"
+            + "\n\n".join(f"<example tier={e.get('tier')}>\n{text[:3000]}\n</example>" for e, text in found)
+            + "\n\n")
+
+
 def cover_letter(job, posting, answers):
     """A short cover letter for this job, as paragraphs (no greeting or sign-off: the PDF adds those)."""
     return _ask(
         "cover_letter",
         f"Write a cover letter for {job['title']} at {job['company']}.\n\n"
         + (f"Job posting:\n{posting[:6000]}\n\n" if posting else "")
+        + _examples("cover_letter", job, posting)
         + "3 short paragraphs, 200-300 words in all, plain and specific: why this role and team (from the posting), "
           "the 2-3 most relevant things the applicant has done (from the resume, with real numbers where the resume "
           "has them), and availability (term, start date) from the profile. Only facts from the profile, resume and "

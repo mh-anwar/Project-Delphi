@@ -82,6 +82,7 @@ only share a server with people who trust its owner, or give each person their o
 | `/block <company or word>`, `/unblock` | never show (or auto-apply to) a company, or titles with a word, e.g. `/block phd`. Digest jobs have a 🚫 Company button too |
 | `/applied` | latest rows of `applied.csv` |
 | `/cost` | Claude spend: last 30 days, average per digest and per application |
+| `/library` | what's in the shared library of example resumes and cover letters |
 | `/week` | this week's applications, and the ones it couldn't finish with their links (also sent Sunday evenings) |
 
 ## Phone view
@@ -123,6 +124,25 @@ answers, and the profile + resume part of that prompt is cached.
 
 Have an ML resume and a general one? List the extra versions under `resumes:` in `profile.yaml`, each with
 keywords. A job whose title contains one of those words gets that version; everything else gets `resume_pdf`.
+
+## Shared library
+
+The group keeps example resumes and cover letters in one git repo, each with a tier: 1 is just a resume, up to 4
+for one that got a FAANG interview (cover letters: ones that passed). Clone it and set `LIBRARY_DIR` in `.env`
+(on a shared server, everyone can point at the same clone). The bot pulls it once a day; `/library` shows what's
+in it.
+
+```
+.venv/bin/python library.py add ~/resume.pdf --kind resume --tier 3 --owner krish --note "Google interview"
+.venv/bin/python library.py list
+.venv/bin/python library.py remove resumes/krish-2026-10-29.txt
+```
+
+`add` keeps only the text, with names, emails, phone numbers, links and street addresses taken out, and shows you
+exactly that before anything is pushed. Other people's documents are only ever used as examples of structure and
+tone: when Claude writes your cover letter it sees the three closest matching examples (tier 2 and up), told
+they aren't about you, and every fact still comes from your own profile and resume. Removed documents stay in the
+repo's git history unless you rewrite it.
 
 ## What you sent
 

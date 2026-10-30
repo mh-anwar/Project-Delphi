@@ -20,6 +20,7 @@ from telegram import InlineKeyboardButton as Button, InlineKeyboardMarkup as Key
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters
 
 import apply
+import library
 import llm
 import sources
 import workday
@@ -190,6 +191,12 @@ async def tick(ctx):
             set_setting("last_weekly", today)
         except Exception:  # retried next hour; the digest check below still runs
             log.exception("weekly summary")
+    if library.folder() and get_setting("last_library_sync") != today:
+        try:  # the group's new examples, once a day
+            await asyncio.to_thread(library.sync)
+            set_setting("last_library_sync", today)
+        except Exception:
+            log.exception("library sync")
     slot = due_slot(now, get_setting("last_digest"))
     if get_setting("paused") or not slot:
         return
@@ -415,6 +422,7 @@ COMMANDS = [  # shown in Telegram's / menu
     ("block", "Hide a company or title word: /block phd"), ("unblock", "Undo a block"),
     ("country", "canada | usa | both"), ("count", "Jobs per digest, 5-10"), ("pause", "Stop the daily digest"),
     ("resume", "Restart the daily digest"), ("cost", "Claude spend"),
+    ("library", "Shared example resumes and cover letters"),
 ]
 
 
@@ -646,6 +654,10 @@ async def cmd_cost(update, ctx):
     await update.message.reply_text(llm.usage_summary())
 
 
+async def cmd_library(update, ctx):
+    await update.message.reply_text(library.summary())
+
+
 async def cmd_applied(update, ctx):
     rows = applied_rows()
     lines = [f"{r['date']}  {r['company']} · {r['title']} ({r['status']})" for r in rows[-15:]]
@@ -842,7 +854,7 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("digest", cmd_digest, me))
     for name, fn in [("country", cmd_country), ("count", cmd_count), ("pause", cmd_pause),
-                     ("resume", cmd_resume), ("applied", cmd_applied), ("cost", cmd_cost),
+                     ("resume", cmd_resume), ("applied", cmd_applied), ("cost", cmd_cost), ("library", cmd_library),
                      ("apply", cmd_apply), ("auto", cmd_auto), ("status", cmd_status), ("answers", cmd_answers),
                      ("forget", cmd_forget), ("block", cmd_block), ("unblock", cmd_unblock),
                      ("week", cmd_week), ("prep", cmd_prep)]:

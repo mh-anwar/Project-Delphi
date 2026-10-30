@@ -26,7 +26,7 @@ LOCK = threading.RLock()  # the digest runs in a worker thread while Telegram ha
 # auto_min: digest picks scoring at least this get applied to without a tap (None = off).
 DEFAULTS = {"countries": ["canada", "usa"], "count": 8, "paused": False, "last_digest": "", "workday_accounts": [],
             "auto_min": None, "source_counts": {},
-            "blocked": [], "last_weekly": ""}
+            "blocked": [], "last_weekly": "", "last_library_sync": ""}
 
 
 def _run(sql, args=()):
