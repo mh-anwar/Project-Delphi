@@ -205,8 +205,12 @@ def save_answers(changes, drop=()):
 
 
 def resume_path(job=None):
-    """The resume for this job: the first `resumes:` variant with one of its keywords in the job title, else
-    resume_pdf."""
+    """The resume for this job: a tailored one you approved for it, else the first `resumes:` variant with one of
+    its keywords in the job title, else resume_pdf."""
+    if job and job.get("resume"):
+        if not Path(job["resume"]).is_file():
+            raise RuntimeError(f"the tailored resume for this job is gone: {job['resume']}")
+        return Path(job["resume"])
     title = f" {re.sub(r'[^a-z0-9+#]+', ' ', job['title'].lower())} " if job else ""
     chosen = next((v["pdf"] for v in PROFILE.get("resumes") or []
                    if any(f" {re.sub(r'[^a-z0-9+#]+', ' ', k.lower()).strip()} " in title
@@ -608,6 +612,61 @@ async def cover_letter_pdf(page, job, answers):
     finally:
         await printer.close()
     return path
+
+
+RESUME_HTML = """<!doctype html><html><head><meta charset="utf-8"><style>
+  body {{ font: 10pt/1.35 Helvetica, Arial, sans-serif; color: #111; margin: 0 }}
+  h1 {{ font-size: 17pt; margin: 0; text-align: center }}
+  .contact {{ text-align: center; color: #333; font-size: 9pt; margin: 2pt 0 8pt }}
+  h2 {{ font-size: 10.5pt; text-transform: uppercase; letter-spacing: .5pt; border-bottom: 1px solid #111;
+        margin: 9pt 0 4pt; padding-bottom: 1pt }}
+  .row {{ display: flex; justify-content: space-between; gap: 12pt; margin-top: 4pt }}
+  .row b {{ font-size: 10pt }} .row span {{ color: #333; white-space: nowrap }}
+  ul {{ margin: 1pt 0 0 14pt; padding: 0 }} li {{ margin: 0 0 1pt }}
+</style></head><body><h1>{name}</h1><div class="contact">{contact}</div>{body}</body></html>"""
+
+
+def slug_of(job):
+    return re.sub(r"[^a-z0-9]+", "-", f"{job['company']} {job['title']}".lower()).strip("-")[:80] or "job"
+
+
+def resume_html(resume):
+    p = PROFILE
+    name = f"{p.get('first_name', '')} {p.get('last_name', '')}".strip()
+    contact = " · ".join(str(v) for v in (p.get("email"), p.get("phone"), p.get("city"), p.get("linkedin"),
+                                          p.get("github"), p.get("website")) if v)
+    body = "".join(
+        f"<h2>{escape(s.title)}</h2>" + "".join(
+            f'<div class="row"><b>{escape(e.heading)}</b><span>{escape(e.detail)}</span></div>'
+            + (f"<ul>{''.join(f'<li>{escape(b)}</li>' for b in e.bullets)}</ul>" if e.bullets else "")
+            for e in s.entries)
+        for s in resume.sections)
+    return RESUME_HTML.format(name=escape(name), contact=escape(contact), body=body)
+
+
+async def tailored_resume(job):
+    """Your resume rewritten by Claude for this job's posting (same facts, picked and ordered for it), printed to
+    tailored/<company>-<title>/<First>_<Last>_Resume.pdf (that's the name employers see). Returns (path, what changed, statements the second read couldn't find in yours).
+    The posting is kept on the job, so the form's essay answers and cover letter reuse it."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        try:
+            page = await browser.new_page()
+            page.set_default_timeout(10000)
+            with contextlib.suppress(Exception):  # no posting text is a weaker tailoring, not a failure
+                await settle(page, canonical(job["url"]))
+            posting = await posting_text(page, job)
+            resume = await asyncio.to_thread(llm.tailor_resume, job, posting)
+            unsupported = await asyncio.to_thread(llm.check_claims, resume)
+            name = re.sub(r"\W+", "_", f"{PROFILE.get('first_name', '')} {PROFILE.get('last_name', '')}").strip("_")
+            path = DATA / "tailored" / slug_of(job) / f"{name or 'My'}_Resume.pdf"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            await page.set_content(resume_html(resume))
+            await page.pdf(path=str(path), format="Letter", margin={"top": "0.5in", "bottom": "0.5in",
+                                                                    "left": "0.6in", "right": "0.6in"})
+        finally:
+            await browser.close()
+    return path, resume.changes, unsupported
 
 
 SUBMIT = re.compile(r"^\s*submit( my| your)?( application)?\s*$", re.I)

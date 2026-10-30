@@ -192,6 +192,107 @@ def test_bot_flow():
         "acme-data-intern", "acme-swe-intern"]  # a copy of each filled form, as sent
 
 
+def _tailor_flow(tmp, tailored_resume=None):
+    """One tailored application through bot.run_apply with a fake Telegram that taps "Use this" and Submit. Returns
+    (messages sent, captions of documents sent, what the form's resume upload held at Submit)."""
+    import bot
+    import store
+
+    store.APPLIED_CSV = tmp / "applied.csv"
+    bot.DATA = apply.DATA = tmp
+    PROFILE.update(first_name="Ada", last_name="Lovelace", email="ada@x.com", city="Toronto",
+                   resume_pdf=str(tmp / "resume.pdf"))
+    (tmp / "resume.pdf").write_bytes(b"%PDF-1.4\n%%EOF\n")
+    apply.ANSWERS = tmp / "answers.json"
+    apply.SUPPORTED = apply.re.compile(r"^file:")
+    llm.map_fields = lambda job, fields, answers, posting="": llm.FormPlan(fills=[], unknown=[])
+    llm.cover_letter = lambda job, posting, answers: ["Hello."]
+    sent, docs, upload = [], [], {}
+
+    class FakeBot:
+        async def send_message(self, chat, text, **kw):
+            sent.append(text)
+            if "verification code" in text:
+                asyncio.get_running_loop().call_later(0.1, bot._answer, "text", "A7Z")
+            elif "needs a few answers" in text or text.startswith("Acme"):
+                asyncio.get_running_loop().call_later(0.1, bot._answer, "text", "Yes, 04/30/2028, She/her")
+
+        async def send_document(self, chat, data, filename="", caption="", reply_markup=None, **kw):
+            docs.append((filename, caption, data[:4]))
+            if caption.startswith("Cover letter for"):
+                return
+            if caption.startswith("Submit this?"):
+                upload.update(await apply._last_page.evaluate("""() => {
+                    const f = document.getElementById('resume').files[0];
+                    return f && {name: f.name, size: f.size};
+                }""") or {})
+            elif not caption.startswith("Tailored for"):
+                raise AssertionError(caption)
+            kind, tag, _ = reply_markup.inline_keyboard[0][0].callback_data.split(":")
+            asyncio.get_running_loop().call_later(0.1, bot._answer, kind, True, tag)  # "Use this" / "Submit"
+
+            class Message:
+                async def edit_reply_markup(self, markup):
+                    pass
+            return Message()
+
+    (tmp / "form.html").write_text(FORM)
+    job = {**bot.sources._job("test", "Acme", "Backend Intern", ["Toronto, ON"], (tmp / "form.html").as_uri()),
+           "tailor": True}
+    open_page, real_tailored = apply.open_page, apply.tailored_resume
+
+    async def remember(p, url):  # keep a handle on the page so the Submit check can look at its upload
+        apply._last_page = await open_page(p, url)
+        return apply._last_page
+    apply.open_page = remember
+    apply.tailored_resume = tailored_resume or real_tailored
+    try:
+        asyncio.run(bot.run_apply(job, FakeBot()))
+    finally:
+        apply.open_page, apply.tailored_resume = open_page, real_tailored
+    assert [m for m in sent if m.startswith("Submitted")] == ["Submitted ✅ Backend Intern @ Acme"], sent
+    return sent, docs, upload
+
+
+def test_tailored_flow():
+    """Apply, tailored: the posting is read off the page, Claude's (stubbed) rewrite is printed to a PDF, sent with
+    the claim the second read couldn't find, and after "Use this" it's the resume the form gets."""
+    tmp = Path(tempfile.mkdtemp())
+    seen = {}
+
+    def fake_tailor(job, posting):
+        seen["posting"] = posting
+        return llm.TailoredResume(changes="Moved the backend internship first.", sections=[llm.ResumeSection(
+            title="Experience", entries=[llm.ResumeEntry(heading="Backend Intern, Initrode", detail="2024",
+                                                         bullets=["Cut p99 latency 40%", "Led a team of 5"])])])
+    real = llm.tailor_resume, llm.check_claims
+    llm.tailor_resume = fake_tailor
+    llm.check_claims = lambda resume: seen.setdefault("checked", resume) and ["Led a team of 5"]
+    try:
+        sent, docs, upload = _tailor_flow(tmp)
+    finally:
+        llm.tailor_resume, llm.check_claims = real
+    assert "rocket-powered roller skates" in seen["posting"]  # read from the posting page
+    assert seen["checked"].changes == "Moved the backend internship first."  # the rewrite is what got checked
+    pdf = tmp / "tailored" / "acme-backend-intern" / "Ada_Lovelace_Resume.pdf"
+    assert pdf.read_bytes().startswith(b"%PDF") and pdf.stat().st_size > 1000
+    filename, caption, head = next(d for d in docs if d[1].startswith("Tailored for"))
+    assert filename == pdf.name and head == b"%PDF", (filename, head)
+    assert "Moved the backend internship first." in caption and "• Led a team of 5" in caption, caption
+    assert upload == {"name": pdf.name, "size": pdf.stat().st_size}, upload  # the tailored one, not resume.pdf
+    assert sent.index("Tailoring your resume for Acme…") < sent.index("Applying to Backend Intern @ Acme…"), sent
+
+
+def test_tailored_flow_failure_uses_usual_resume():
+    async def broken(job):
+        raise RuntimeError("Claude is down")
+    tmp = Path(tempfile.mkdtemp())
+    sent, docs, upload = _tailor_flow(tmp, broken)
+    assert "Couldn't tailor it (Claude is down), so I'll use your usual resume." in sent, sent
+    assert not any(d[1].startswith("Tailored for") for d in docs)
+    assert upload == {"name": "resume.pdf", "size": (tmp / "resume.pdf").stat().st_size}, upload
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

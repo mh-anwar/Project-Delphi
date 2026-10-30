@@ -91,6 +91,13 @@ fixes", "Third review fixes" commits).
       add → other clone syncs → remove, against a local bare repo. Not tried with a real Claude call yet.
 - [ ] Add to the library from Telegram (send a PDF, see the redacted text, tap Add) so nobody needs a shell.
 
+## Done (branch `tailor`, stacked on `library`)
+
+- [x] Opt-in tailored resumes: "Apply, tailored ✂️" digest button and `/tailor <link>`. Claude rewrites
+      `resume_text` for the posting (same facts, library resumes as structure-only examples), a Haiku pass lists
+      claims not in the original, the PDF comes to you with Use this / Use my usual one, then the form is filled
+      with your choice. Not tried with a real Claude call yet.
+
 ## Log
 
 - 2026-10-29: 30 commits on `improvements`, PR #1 opened from the fork. Live verification scripts lived in
